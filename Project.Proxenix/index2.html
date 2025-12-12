@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ConnectHub — Demo</title>
+
+  <!-- React + Babel (development usage via UMD + Babel standalone for JSX) -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Tailwind CDN (for quick styling) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Font Awesome icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+  <style>
+    /* small scrollbar stylings and animations (same idea as your original) */
+    .messages-container { scrollbar-width: thin; }
+    .messages-container::-webkit-scrollbar { width: 8px; }
+    .messages-container::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 6px; }
+    .typing-indicator span { height: 7px; width: 7px; background: #718096; border-radius: 50%; display:inline-block; margin:0 2px; animation: bounce 1.2s infinite ease-in-out both; }
+    .typing-indicator span:nth-child(1){ animation-delay: -0.3s; }
+    .typing-indicator span:nth-child(2){ animation-delay: -0.15s; }
+    @keyframes bounce { 0%,80%,100%{ transform: scale(0);} 40%{ transform: scale(1);} }
+    .notification { position: fixed; right: 18px; bottom: 18px; z-index:50; min-width:220px; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    /*******************************************************************
+     * MOCK DATA
+     *******************************************************************/
+    const mockUsers = [
+      { id: 1, name: 'John Doe', avatar: 'https://picsum.photos/seed/user1/200/200.jpg', status: 'online', email: 'john@example.com' },
+      { id: 2, name: 'Jane Smith', avatar: 'https://picsum.photos/seed/user2/200/200.jpg', status: 'online', email: 'jane@example.com' },
+      { id: 3, name: 'Alex Johnson', avatar: 'https://picsum.photos/seed/user3/200/200.jpg', status: 'away', email: 'alex@example.com' },
+      { id: 4, name: 'Sam Wilson', avatar: 'https://picsum.photos/seed/user4/200/200.jpg', status: 'offline', email: 'sam@example.com' },
+    ];
+
+    const mockChannels = [
+      { id: 1, name: 'general', type: 'public', description: 'General discussions' },
+      { id: 2, name: 'random', type: 'public', description: 'Random conversations' },
+      { id: 3, name: 'dev-team', type: 'private', description: 'Dev team' },
+    ];
+
+    const initialMessages = {
+      1: [
+        { id: 101, userId: 1, content: "Hey everyone! How's it going?", ts: Date.now()-3600000, reactions: { '👍': [2], '😄': [3] }, attachments: [] },
+        { id: 102, userId: 2, content: "Working on a neat feature.", ts: Date.now()-3000000, reactions: {}, attachments: [] },
+      ],
+      2: [
+        { id: 201, userId: 4, content: "Anyone up for coffee later?", ts: Date.now()-900000, reactions: {}, attachments: [] }
+      ],
+      3: [
+        { id: 301, userId: 2, content: "Deployment ready for testing.", ts: Date.now()-1200000, reactions: { '✅': [1] }, attachments: [] }
+      ]
+    };
+
+    const emojis = ['😀','😃','😄','😁','😅','😂','🤣','😊','😍','😎','🤩','👍','👎','👏','🙏','🔥','🎉','❤️','🤔','🤯','🤖','☕'];
+
+    /*******************************************************************
+     * APP
+     *******************************************************************/
+    function App(){
+      // state
+      const [user, setUser] = useState(null);
+      const [channels] = useState(mockChannels);
+      const [currentChannel, setCurrentChannel] = useState(mockChannels[0]);
+      const [messages, setMessages] = useState(initialMessages);
+      const [notifications, setNotifications] = useState([]);
+      const [typingUsers, setTypingUsers] = useState([]);
+      const [showSearch, setShowSearch] = useState(false);
+      const [searchQuery, setSearchQuery] = useState('');
+
+      // ref for stable interval callback
+      const messagesRef = useRef(messages);
+      useEffect(()=> messagesRef.current = messages, [messages]);
+
+      // simulate incoming messages occasionally (only after a user logs in)
+      useEffect(()=>{
+        if(!user) return;
+        const interval = setInterval(()=>{
+          if(Math.random() > 0.65){
+            const remote = mockUsers.filter(u => u.id !== user.id)[Math.floor(Math.random()*(mockUsers.length-1))];
+            const ch = channels[Math.floor(Math.random()*channels.length)];
+            const msg = { id: Date.now(), userId: remote.id, content: `Random: ${Math.random().toString(36).slice(2,8)}`, ts: Date.now(), reactions: {}, attachments: [] };
+            setMessages(prev => ({ ...(prev||{}), [ch.id]: [...(prev[ch.id]||[]), msg] }));
+            pushNotification(ch.id===currentChannel.id ? `${remote.name}: ${msg.content}` : `New message in #${ch.name}`, 'info');
+            // occasionally simulate typing
+            setTypingUsers([remote.id]);
+            setTimeout(()=> setTypingUsers([]), 1800);
+          }
+        }, 9000);
+        return ()=> clearInterval(interval);
+      }, [user, channels, currentChannel]);
+
+      function pushNotification(text, type='info'){
+        const id = Date.now()+Math.random();
+        setNotifications(n => [...n, { id, text, type }]);
+        setTimeout(()=> setNotifications(n => n.filter(x => x.id !== id)), 4200);
+      }
+
+      function handleLogin({ name, email }){
+        // if matches existing user by email, log them in; otherwise create a quick user
+        let found = mockUsers.find(u => u.email === email);
+        if(!found){
+          // allow login by name too: if name matches mock user, use that one
+          found = mockUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
+        }
+        if(!found){
+          found = { id: Date.now(), name: name || (email ? email.split('@')[0] : 'Guest'), avatar: `https://picsum.photos/seed/${Date.now() % 1000}/200/200.jpg`, status: 'online', email };
+        }
+        setUser(found);
+        pushNotification(`Welcome back, ${found.name}!`, 'success');
+      }
+
+      function handleLogout(){
+        setUser(null);
+        pushNotification('You have been logged out', 'info');
+      }
+
+      function sendMessageToChannel(channelId, content='', attachments=[]){
+        if(!user) return;
+        const msg = { id: Date.now(), userId: user.id, content, ts: Date.now(), reactions: {}, attachments };
+        setMessages(prev => ({ ...(prev||{}), [channelId]: [...(prev[channelId]||[]), msg] }));
+        // simulate others typing shortly
+        setTimeout(()=>{
+          const other = mockUsers.filter(u => u.id !== user.id)[Math.floor(Math.random()*(mockUsers.length-1))];
+          setTypingUsers([other.id]);
+          setTimeout(()=> setTypingUsers([]), 1700);
+        }, 900);
+      }
+
+      // add/toggle reaction
+      function toggleReaction(channelId, messageId, emoji){
+        setMessages(prev => {
+          const chMsgs = (prev[channelId]||[]).map(m => {
+            if(m.id !== messageId) return m;
+            const newReacts = { ...(m.reactions||{}) };
+            newReacts[emoji] = newReacts[emoji] ? [...newReacts[emoji]] : [];
+            const has = newReacts[emoji].includes(user.id);
+            if(has){
+              newReacts[emoji] = newReacts[emoji].filter(id => id !== user.id);
+              if(newReacts[emoji].length===0) delete newReacts[emoji];
+            } else {
+              newReacts[emoji].push(user.id);
+            }
+            return {...m, reactions: newReacts};
+          });
+          return {...prev, [channelId]: chMsgs};
+        });
+      }
+
+      // helper for search filtering
+      const filteredMessages = (messages[currentChannel.id]||[]).filter(m => m.content.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      return (
+        <div className="h-screen flex flex-col">
+          {/* notifications stack */}
+          <div className="fixed right-4 bottom-4 space-y-2 z-50">
+            {notifications.map(n => (
+              <div key={n.id} className={`notification p-3 rounded shadow-lg ${n.type==='success' ? 'bg-green-500 text-white' : n.type==='error' ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>
+                <div className="flex items-center space-x-2">
+                  <i className={`fas ${n.type==='success' ? 'fa-check-circle' : n.type==='error' ? 'fa-exclamation-circle' : 'fa-info-circle'}`}></i>
+                  <div className="text-sm">{n.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {!user ? (
+            <Login onLogin={handleLogin} />
+          ) : (
+            <>
+              <Header user={user} onLogout={handleLogout} showSearch={showSearch} setShowSearch={setShowSearch} searchQuery={searchQuery} setSearchQuery={setSearchQuery}/>
+              <div className="flex flex-1 overflow-hidden">
+                <Sidebar channels={channels} currentChannel={currentChannel} setCurrentChannel={setCurrentChannel} users={mockUsers} currentUser={user}/>
+                <ChatArea
+                  key={currentChannel.id}
+                  channel={currentChannel}
+                  messages={searchQuery ? filteredMessages : (messages[currentChannel.id]||[])}
+                  allMessages={messages}
+                  users={mockUsers}
+                  currentUser={user}
+                  onSend={(content, attachments)=> sendMessageToChannel(currentChannel.id, content, attachments)}
+                  onToggleReaction={(msgId, e) => toggleReaction(currentChannel.id, msgId, e)}
+                  typingUsers={typingUsers}
+                  pushNotification={pushNotification}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    /*******************************************************************
+     * Login (simple)
+     *******************************************************************/
+    function Login({ onLogin }){
+      const [name, setName] = useState('');
+      const [email, setEmail] = useState('');
+      return (
+        <div className="flex items-center justify-center flex-1 bg-gradient-to-br from-blue-500 to-purple-600 p-6">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h1 className="text-2xl font-bold mb-1">ConnectHub</h1>
+            <p className="text-sm text-gray-500 mb-4">Real-time messaging (demo)</p>
+
+            <form onSubmit={(e)=>{ e.preventDefault(); onLogin({name: name||'Guest', email}); }}>
+              <div className="mb-3">
+                <label className="block text-sm text-gray-700">Name</label>
+                <input className="mt-1 w-full border px-3 py-2 rounded" value={name} onChange={e=>setName(e.target.value)} placeholder="Your name"/>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm text-gray-700">Email (optional)</label>
+                <input className="mt-1 w-full border px-3 py-2 rounded" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/>
+              </div>
+
+              <button className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">Login / Continue</button>
+            </form>
+
+            <p className="text-xs text-gray-400 mt-4">This is a demo. Use any name to continue.</p>
+          </div>
+        </div>
+      );
+    }
+
+    /*******************************************************************
+     * Header
+     *******************************************************************/
+    function Header({ user, onLogout, showSearch, setShowSearch, searchQuery, setSearchQuery }){
+      return (
+        <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <h2 className="text-lg font-semibold">ConnectHub</h2>
+            <span className="text-xs text-gray-500 px-2 py-1 rounded bg-green-50">End-to-end encrypted</span>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            {showSearch && (
+              <div className="relative">
+                <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search messages..." className="pl-10 pr-3 py-2 border rounded"/>
+                <i className="fas fa-search absolute left-3 top-2 text-gray-400"></i>
+              </div>
+            )}
+
+            <button title="Toggle search" onClick={()=> setShowSearch(s=>!s)} className="text-gray-600"><i className="fas fa-search"></i></button>
+            <button title="Settings" className="text-gray-600"><i className="fas fa-cog"></i></button>
+
+            <div className="flex items-center space-x-2">
+              <img src={user.avatar} className="w-8 h-8 rounded-full" alt={user.name}/>
+              <div className="text-sm">
+                <div>{user.name}</div>
+                <div className="text-xs text-gray-500">Active now</div>
+              </div>
+              <button onClick={onLogout} title="Logout" className="ml-2 text-gray-600"><i className="fas fa-sign-out-alt"></i></button>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    /*******************************************************************
+     * Sidebar
+     *******************************************************************/
+    function Sidebar({ channels, currentChannel, setCurrentChannel, users, currentUser }){
+      const [showUsers, setShowUsers] = useState(false);
+      return (
+        <aside className="w-64 bg-gray-800 text-white flex flex-col">
+          <div className="p-4 border-b border-gray-700">
+            <h3 className="font-semibold">Channels</h3>
+          </div>
+
+          <div className="flex-1 overflow-auto">
+            <div className="p-2 space-y-1">
+              {channels.map(ch => (
+                <button key={ch.id} onClick={()=>setCurrentChannel(ch)}
+                  className={`w-full text-left px-3 py-2 rounded flex items-center space-x-2 ${currentChannel.id===ch.id ? 'bg-gray-700' : 'hover:bg-gray-700'}`}>
+                  <span>{ch.type==='private' ? <i className="fas fa-lock"></i> : <i className="fas fa-hashtag"></i>}</span>
+                  <span className="truncate">{ch.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="p-3 border-t border-gray-700">
+              <button onClick={()=>setShowUsers(s => !s)} className="w-full flex items-center justify-between px-2 py-2 rounded hover:bg-gray-700">
+                <div className="flex items-center space-x-2"><i className="fas fa-users"></i><span>People</span></div>
+                <i className={`fas fa-chevron-${showUsers ? 'up' : 'down'}`}></i>
+              </button>
+
+              {showUsers && (
+                <div className="mt-2 space-y-1">
+                  {users.filter(u=>u.id!==currentUser.id).map(u => (
+                    <div key={u.id} className="flex items-center space-x-2 px-2 py-2 rounded hover:bg-gray-700">
+                      <div className="relative">
+                        <img src={u.avatar} className="w-8 h-8 rounded-full" />
+                        <span className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-gray-800 ${u.status==='online' ? 'bg-green-400' : u.status==='away' ? 'bg-yellow-400' : 'bg-gray-500'}`}></span>
+                      </div>
+                      <div className="text-sm">{u.name}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="p-3 border-t border-gray-700">
+            <div className="flex items-center space-x-2">
+              <img src={currentUser.avatar} className="w-10 h-10 rounded-full"/>
+              <div className="flex-1">
+                <div className="text-sm">{currentUser.name}</div>
+                <div className="text-xs text-gray-300">Active now</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      );
+    }
+
+    /*******************************************************************
+     * ChatArea (composer, messages, reactions, attachments)
+     *******************************************************************/
+    function ChatArea({ channel, messages, allMessages, users, currentUser, onSend, onToggleReaction, typingUsers, pushNotification }){
+      const [input, setInput] = useState('');
+      const [showEmojiPickerForInput, setShowEmojiPickerForInput] = useState(false);
+      const [emojiPickerForMessage, setEmojiPickerForMessage] = useState(null); // messageId -> show
+      const [fileBeingAttached, setFileBeingAttached] = useState(null);
+
+      const fileRef = useRef(null);
+      const endRef = useRef(null);
+
+      // scroll on messages update
+      useEffect(()=> endRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages]);
+
+      function handleSend(e){
+        e?.preventDefault();
+        const content = input.trim();
+        if(!content && !fileBeingAttached) return;
+        const attach = fileBeingAttached ? [{ name: fileBeingAttached.name, url: URL.createObjectURL(fileBeingAttached), type: fileBeingAttached.type }] : [];
+        onSend(content || (attach.length ? '(file)' : ''), attach);
+        setInput('');
+        setShowEmojiPickerForInput(false);
+        setFileBeingAttached(null);
+        if(attach.length) pushNotification('File sent', 'success');
+      }
+
+      function pickAttachment(){
+        fileRef.current?.click();
+      }
+
+      function onFileChange(e){
+        const f = e.target.files?.[0];
+        if(f) setFileBeingAttached(f);
+        e.target.value = '';
+      }
+
+      function insertEmojiToInput(emoji){
+        setInput(prev => prev + emoji);
+        setShowEmojiPickerForInput(false);
+      }
+
+      function addReactionToMessage(msgId, emoji){
+        onToggleReaction(msgId, emoji);
+        setEmojiPickerForMessage(null);
+      }
+
+      function formatTime(ts){
+        return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+
+      function getUserById(id){
+        return users.find(u => u.id === id) || { name: 'Unknown', avatar: '' };
+      }
+
+      return (
+        <div className="flex-1 flex flex-col bg-white">
+          <div className="px-6 py-4 border-b flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold"><i className={channel.type==='private' ? 'fas fa-lock mr-2' : 'fas fa-hashtag mr-2'}></i>{channel.name}</h3>
+              <div className="text-sm text-gray-500">{channel.description}</div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button title="Call" className="text-gray-600"><i className="fas fa-phone"></i></button>
+              <button title="Video" className="text-gray-600"><i className="fas fa-video"></i></button>
+              <button title="Channel info" className="text-gray-600"><i className="fas fa-info-circle"></i></button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto messages-container px-6 py-4">
+            {messages.length === 0 && <div className="text-center text-gray-400 mt-6">No messages yet — say hi 👋</div>}
+
+            {messages.map(m => {
+              const author = getUserById(m.userId);
+              const mine = m.userId === currentUser.id;
+              return (
+                <div key={m.id} className={`mb-4 flex ${mine ? 'justify-end' : 'justify-start' }`}>
+                  {!mine && <img src={author.avatar} className="w-8 h-8 rounded-full mr-3" alt={author.name}/>}
+
+                  <div className="max-w-md">
+                    {!mine && <div className="text-xs text-gray-500 mb-1">{author.name}</div>}
+                    <div className={`relative px-4 py-2 rounded-lg ${mine ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
+                      <div>{m.content}</div>
+
+                      {m.attachments && m.attachments.length>0 && (
+                        <div className="mt-2">
+                          {m.attachments.map((a, idx) => (
+                            <div key={idx} className="mt-1 text-xs">
+                              <a href={a.url} target="_blank" rel="noreferrer" className={`${mine ? 'text-blue-100' : 'text-blue-600'} underline`}>{a.name}</a>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className={`text-xs ${mine ? 'text-blue-100' : 'text-gray-500'} mt-1`}>{formatTime(m.ts)}</div>
+
+                      {/* emoji picker toggle (per message) */}
+                      <button
+                        onClick={()=> setEmojiPickerForMessage(id => id === m.id ? null : m.id)}
+                        className={`absolute -bottom-3 ${mine ? 'left-0' : 'right-0'} bg-white border border-gray-200 rounded-full w-7 h-7 flex items-center justify-center text-gray-700`}
+                        title="React"
+                      >
+                        <i className="fas fa-smile"></i>
+                      </button>
+
+                      {emojiPickerForMessage === m.id && (
+                        <div className="absolute bottom-10 right-0 bg-white border p-2 rounded shadow-md z-20">
+                          <div className="grid grid-cols-6 gap-1 max-h-40 overflow-auto">
+                            {emojis.map(e => (
+                              <button key={e} className="p-1 text-lg" onClick={()=> addReactionToMessage(m.id, e)}>{e}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* reactions row */}
+                    {m.reactions && Object.keys(m.reactions).length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {Object.entries(m.reactions).map(([emo, ids]) => (
+                          <button key={emo} onClick={()=> onToggleReaction(m.id, emo)} className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${ids.includes(currentUser.id) ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>
+                            <span>{emo}</span>
+                            <span>{ids.length}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {mine && <img src={author.avatar} className="w-8 h-8 rounded-full ml-3" />}
+                </div>
+              );
+            })}
+
+            {typingUsers.length > 0 && (
+              <div className="flex items-center mt-2">
+                <div className="typing-indicator px-3 py-2 rounded-full bg-gray-100 inline-flex items-center">
+                  <span></span><span></span><span></span>
+                </div>
+                <div className="ml-2 text-sm text-gray-500">{typingUsers.map(id => getUserById(id).name).join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing…</div>
+              </div>
+            )}
+
+            <div ref={endRef} />
+          </div>
+
+          {/* composer */}
+          <form onSubmit={handleSend} className="px-6 py-4 border-t">
+            <div className="flex items-center space-x-2">
+              <input type="file" className="hidden" ref={fileRef} onChange={onFileChange} />
+              <button type="button" onClick={pickAttachment} title="Attach file" className="text-gray-600"><i className="fas fa-paperclip"></i></button>
+
+              <div className="relative flex-1">
+                <input value={input} onChange={e=>setInput(e.target.value)} placeholder="Type a message..." className="w-full px-4 py-2 border rounded-full" />
+                <button type="button" onClick={()=> setShowEmojiPickerForInput(s=>!s)} className="absolute right-10 top-1/2 -translate-y-1/2 text-gray-600"><i className="fas fa-smile"></i></button>
+
+                {showEmojiPickerForInput && (
+                  <div className="absolute bottom-12 right-0 bg-white border p-2 rounded shadow-md z-30">
+                    <div className="grid grid-cols-6 gap-1 max-h-40 overflow-auto">
+                      {emojis.map(e => <button key={e} onClick={()=> insertEmojiToInput(e)} className="p-1 text-lg">{e}</button>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700"><i className="fas fa-paper-plane"></i></button>
+            </div>
+
+            {/* attachment preview */}
+            {fileBeingAttached && <div className="mt-2 text-sm text-gray-600">Attaching: {fileBeingAttached.name} <button onClick={()=> setFileBeingAttached(null)} className="ml-2 text-red-500">Remove</button></div>}
+          </form>
+        </div>
+      );
+    }
+
+    // Render to DOM using React 18 API
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App/>);
+  </script>
+</body>
+</html>

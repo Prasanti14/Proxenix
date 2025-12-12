@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ConnectHub - Real-time Messaging Platform</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+        
+        .chat-container {
+            height: calc(100vh - 60px);
+        }
+        
+        .messages-container {
+            height: calc(100% - 140px);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e0 #f7fafc;
+        }
+        
+        .messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .messages-container::-webkit-scrollbar-track {
+            background: #f7fafc;
+        }
+        
+        .messages-container::-webkit-scrollbar-thumb {
+            background-color: #cbd5e0;
+            border-radius: 3px;
+        }
+        
+        .emoji-picker {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 5px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .emoji-option {
+            cursor: pointer;
+            font-size: 1.5rem;
+            padding: 5px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        
+        .emoji-option:hover {
+            background-color: #edf2f7;
+        }
+        
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transform: translateX(120%);
+            transition: transform 0.3s ease-out;
+            z-index: 1000;
+            max-width: 300px;
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            margin: 5px 0;
+            background-color: #edf2f7;
+            border-radius: 18px;
+            width: fit-content;
+        }
+        
+        .typing-indicator span {
+            height: 8px;
+            width: 8px;
+            background-color: #718096;
+            border-radius: 50%;
+            display: inline-block;
+            margin: 0 2px;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        
+        .typing-indicator span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+        
+        .typing-indicator span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+        
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .slide-in {
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // Mock data
+        const mockUsers = [
+            { id: 1, name: 'John Doe', avatar: 'https://picsum.photos/seed/user1/200/200.jpg', status: 'online' },
+            { id: 2, name: 'Jane Smith', avatar: 'https://picsum.photos/seed/user2/200/200.jpg', status: 'online' },
+            { id: 3, name: 'Alex Johnson', avatar: 'https://picsum.photos/seed/user3/200/200.jpg', status: 'away' },
+            { id: 4, name: 'Sam Wilson', avatar: 'https://picsum.photos/seed/user4/200/200.jpg', status: 'offline' },
+            { id: 5, name: 'Taylor Brown', avatar: 'https://picsum.photos/seed/user5/200/200.jpg', status: 'online' }
+        ];
+
+        const mockChannels = [
+            { id: 1, name: 'general', type: 'public', description: 'General discussions' },
+            { id: 2, name: 'random', type: 'public', description: 'Random conversations' },
+            { id: 3, name: 'dev-team', type: 'private', description: 'Development team discussions' },
+            { id: 4, name: 'project-alpha', type: 'private', description: 'Project Alpha updates' }
+        ];
+
+        const mockMessages = {
+            1: [
+                { id: 1, userId: 1, content: 'Hey everyone! How\'s it going?', timestamp: new Date(Date.now() - 3600000), reactions: { '👍': [1, 2], '😄': [3] } },
+                { id: 2, userId: 2, content: 'Great! Just working on some new features.', timestamp: new Date(Date.now() - 3000000), reactions: {} },
+                { id: 3, userId: 3, content: 'That sounds exciting! What are you building?', timestamp: new Date(Date.now() - 2400000), reactions: { '🤔': [2] } },
+                { id: 4, userId: 1, content: 'A real-time messaging platform with React!', timestamp: new Date(Date.now() - 1800000), reactions: { '🚀': [2, 3, 4], '👏': [5] } }
+            ],
+            2: [
+                { id: 5, userId: 4, content: 'Anyone up for coffee later?', timestamp: new Date(Date.now() - 900000), reactions: {} },
+                { id: 6, userId: 5, content: 'Count me in!', timestamp: new Date(Date.now() - 600000), reactions: { '☕': [4] } }
+            ],
+            3: [
+                { id: 7, userId: 2, content: 'The new deployment is ready for testing.', timestamp: new Date(Date.now() - 1200000), reactions: { '✅': [1] } },
+                { id: 8, userId: 3, content: 'I\'ll start testing right away.', timestamp: new Date(Date.now() - 900000), reactions: {} }
+            ],
+            4: [
+                { id: 9, userId: 1, content: 'Project Alpha milestone achieved!', timestamp: new Date(Date.now() - 1500000), reactions: { '🎉': [2, 3, 4, 5] } }
+            ]
+        };
+
+        const emojis = ['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐️', '🖖', '👋', '🤝', '🙏', '✍️', '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃', '🧠', '🦷', '🦴', '👀', '👁️', '👅', '👄'];
+
+        // Main App Component
+        function App() {
+            const [user, setUser] = useState(null);
+            const [currentChannel, setCurrentChannel] = useState(mockChannels[0]);
+            const [messages, setMessages] = useState(mockMessages);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [showSearch, setShowSearch] = useState(false);
+            const [notifications, setNotifications] = useState([]);
+            const [typingUsers, setTypingUsers] = useState([]);
+            const [showEmojiPicker, setShowEmojiPicker] = useState(null);
+            const [directMessages, setDirectMessages] = useState([]);
+
+            useEffect(() => {
+                // Simulate receiving messages
+                const interval = setInterval(() => {
+                    if (Math.random() > 0.7 && user) {
+                        const randomUser = mockUsers.filter(u => u.id !== user.id)[Math.floor(Math.random() * (mockUsers.length - 1))];
+                        const randomChannel = mockChannels[Math.floor(Math.random() * mockChannels.length)];
+                        const newMessage = {
+                            id: Date.now(),
+                            userId: randomUser.id,
+                            content: `Random message from ${randomUser.name}`,
+                            timestamp: new Date(),
+                            reactions: {}
+                        };
+                        
+                        setMessages(prev => ({
+                            ...prev,
+                            [randomChannel.id]: [...(prev[randomChannel.id] || []), newMessage]
+                        }));
+                        
+                        if (randomChannel.id === currentChannel.id) {
+                            showNotification(`${randomUser.name}: ${newMessage.content}`, 'info');
+                        } else {
+                            showNotification(`New message in #${randomChannel.name}`, 'info');
+                        }
+                    }
+                }, 15000);
+                
+                return () => clearInterval(interval);
+            }, [user, currentChannel]);
+
+            const showNotification = (message, type = 'info') => {
+                const id = Date.now();
+                setNotifications(prev => [...prev, { id, message, type }]);
+                
+                setTimeout(() => {
+                    setNotifications(prev => prev.filter(n => n.id !== id));
+                }, 4000);
+            };
+
+            const handleLogin = (userData) => {
+                setUser(userData);
+                showNotification(`Welcome back, ${userData.name}!`, 'success');
+            };
+
+            const handleLogout = () => {
+                setUser(null);
+                showNotification('You have been logged out', 'info');
+            };
+
+            const sendMessage = (content) => {
+                if (!content.trim()) return;
+                
+                const newMessage = {
+                    id: Date.now(),
+                    userId: user.id,
+                    content,
+                    timestamp: new Date(),
+                    reactions: {}
+                };
+                
+                setMessages(prev => ({
+                    ...prev,
+                    [currentChannel.id]: [...(prev[currentChannel.id] || []), newMessage]
+                }));
+                
+                // Simulate typing indicator from others
+                setTimeout(() => {
+                    const randomUser = mockUsers.filter(u => u.id !== user.id)[Math.floor(Math.random() * (mockUsers.length - 1))];
+                    setTypingUsers([randomUser.id]);
+                    
+                    setTimeout(() => {
+                        setTypingUsers([]);
+                    }, 3000);
+                }, 1000);
+            };
+
+            const addReaction = (messageId, emoji) => {
+                setMessages(prev => {
+                    const channelMessages = [...(prev[currentChannel.id] || [])];
+                    const messageIndex = channelMessages.findIndex(m => m.id === messageId);
+                    
+                    if (messageIndex !== -1) {
+                        const message = { ...channelMessages[messageIndex] };
+                        const reactions = { ...message.reactions };
+                        
+                        if (!reactions[emoji]) {
+                            reactions[emoji] = [];
+                        }
+                        
+                        if (!reactions[emoji].includes(user.id)) {
+                            reactions[emoji] = [...reactions[emoji], user.id];
+                        } else {
+                            reactions[emoji] = reactions[emoji].filter(id => id !== user.id);
+                            if (reactions[emoji].length === 0) {
+                                delete reactions[emoji];
+                            }
+                        }
+                        
+                        message.reactions = reactions;
+                        channelMessages[messageIndex] = message;
+                        
+                        return {
+                            ...prev,
+                            [currentChannel.id]: channelMessages
+                        };
+                    }
+                    
+                    return prev;
+                });
+            };
+
+            const filteredMessages = searchQuery
+                ? (messages[currentChannel.id] || []).filter(msg =>
+                    msg.content.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+                : (messages[currentChannel.id] || []);
+
+            return (
+                <div className="flex flex-col h-screen bg-gray-50">
+                    {notifications.map(notification => (
+                        <Notification
+                            key={notification.id}
+                            message={notification.message}
+                            type={notification.type}
+                        />
+                    ))}
+                    
+                    {!user ? (
+                        <Login onLogin={handleLogin} />
+                    ) : (
+                        <>
+                            <Header
+                                user={user}
+                                onLogout={handleLogout}
+                                onToggleSearch={() => setShowSearch(!showSearch)}
+                                showSearch={showSearch}
+                                searchQuery={searchQuery}
+                                onSearchChange={setSearchQuery}
+                            />
+                            
+                            <div className="flex flex-1 overflow-hidden">
+                                <Sidebar
+                                    channels={mockChannels}
+                                    currentChannel={currentChannel}
+                                    onChannelSelect={setCurrentChannel}
+                                    users={mockUsers}
+                                    currentUser={user}
+                                    directMessages={directMessages}
+                                    onDirectMessage={setDirectMessages}
+                                />
+                                
+                                <ChatArea
+                                    channel={currentChannel}
+                                    messages={filteredMessages}
+                                    users={mockUsers}
+                                    currentUser={user}
+                                    onSendMessage={sendMessage}
+                                    onAddReaction={addReaction}
+                                    typingUsers={typingUsers}
+                                    showEmojiPicker={showEmojiPicker}
+                                    onToggleEmojiPicker={setShowEmojiPicker}
+                                />
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        }
+
+        // Login Component
+        function Login({ onLogin }) {
+            const [isRegistering, setIsRegistering] = useState(false);
+            const [formData, setFormData] = useState({
+                name: '',
+                email: '',
+                password: ''
+            });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (isRegistering) {
+                    // Simulate registration
+                    const newUser = {
+                        id: Date.now(),
+                        name: formData.name,
+                        email: formData.email,
+                        avatar: `https://picsum.photos/seed/${formData.email}/200/200.jpg`,
+                        status: 'online'
+                    };
+                    onLogin(newUser);
+                } else {
+                    // Simulate login
+                    const existingUser = mockUsers.find(u => u.email === formData.email);
+                    if (existingUser) {
+                        onLogin(existingUser);
+                    } else {
+                        alert('User not found. Please register.');
+                        setIsRegistering(true);
+                    }
+                }
+            };
+
+            return (
+                <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-500 to-purple-600">
+                    <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                        <div className="text-center mb-8">
+                            <h1 className="text-3xl font-bold text-gray-800">ConnectHub</h1>
+                            <p className="text-gray-600 mt-2">Real-time messaging platform</p>
+                        </div>
+                        
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                            {isRegistering && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        value={formData.name}
+                                        onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                    />
+                                </div>
+                            )}
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <input
+                                    type="email"
+                                    required
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={formData.email}
+                                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                                />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                <input
+                                    type="password"
+                                    required
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={formData.password}
+                                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                                />
+                            </div>
+                            
+                            <button
+                                type="submit"
+                                className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-200"
+                            >
+                                {isRegistering ? 'Register' : 'Login'}
+                            </button>
+                        </form>
+                        
+                        <div className="mt-6 text-center">
+                            <p className="text-sm text-gray-600">
+                                {isRegistering ? 'Already have an account?' : "Don't have an account?"}
+                                <button
+                                    type="button"
+                                    onClick={() => setIsRegistering(!isRegistering)}
+                                    className="ml-1 text-blue-600 hover:underline"
+                                >
+                                    {isRegistering ? 'Login' : 'Register'}
+                                </button>
+                            </p>
+                        </div>
+                        
+                        <div className="mt-6 text-center">
+                            <p className="text-xs text-gray-500">
+                                By continuing, you agree to our Terms of Service and Privacy Policy.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Header Component
+        function Header({ user, onLogout, onToggleSearch, showSearch, searchQuery, onSearchChange }) {
+            return (
+                <header className="bg-white shadow-sm border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                        <h1 className="text-xl font-bold text-gray-800">ConnectHub</h1>
+                        <span className="text-xs text-gray-500 bg-green-100 px-2 py-1 rounded-full">End-to-end encrypted</span>
+                    </div>
+                    
+                    <div className="flex items-center space-x-4">
+                        {showSearch && (
+                            <div className="relative fade-in">
+                                <input
+                                    type="text"
+                                    placeholder="Search messages..."
+                                    className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={searchQuery}
+                                    onChange={(e) => onSearchChange(e.target.value)}
+                                />
+                                <i className="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                            </div>
+                        )}
+                        
+                        <button
+                            onClick={onToggleSearch}
+                            className="text-gray-600 hover:text-gray-800"
+                        >
+                            <i className="fas fa-search"></i>
+                        </button>
+                        
+                        <button className="text-gray-600 hover:text-gray-800">
+                            <i className="fas fa-cog"></i>
+                        </button>
+                        
+                        <div className="flex items-center space-x-2">
+                            <img
+                                src={user.avatar}
+                                alt={user.name}
+                                className="w-8 h-8 rounded-full"
+                            />
+                            <span className="text-sm font-medium text-gray-700">{user.name}</span>
+                            <button
+                                onClick={onLogout}
+                                className="text-gray-600 hover:text-gray-800 ml-2"
+                            >
+                                <i className="fas fa-sign-out-alt"></i>
+                            </button>
+                        </div>
+                    </div>
+                </header>
+            );
+        }
+
+        // Sidebar Component
+        function Sidebar({ channels, currentChannel, onChannelSelect, users, currentUser, directMessages, onDirectMessage }) {
+            const [showUsers, setShowUsers] = useState(false);
+            
+            return (
+                <aside className="w-64 bg-gray-800 text-white flex flex-col">
+                    <div className="p-4 border-b border-gray-700">
+                        <h2 className="text-lg font-semibold">Channels</h2>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto">
+                        <div className="p-2">
+                            {channels.map(channel => (
+                                <button
+                                    key={channel.id}
+                                    onClick={() => onChannelSelect(channel)}
+                                    className={`w-full text-left px-3 py-2 rounded-md flex items-center space-x-2 transition-colors ${
+                                        currentChannel.id === channel.id
+                                            ? 'bg-gray-700 text-white'
+                                            : 'hover:bg-gray-700 text-gray-300'
+                                    }`}
+                                >
+                                    <span className="text-lg">
+                                        {channel.type === 'private' ? <i className="fas fa-lock"></i> : <i className="fas fa-hashtag"></i>}
+                                    </span>
+                                    <span>{channel.name}</span>
+                                </button>
+                            ))}
+                        </div>
+                        
+                        <div className="p-4 border-t border-gray-700">
+                            <button
+                                onClick={() => setShowUsers(!showUsers)}
+                                className="w-full text-left px-3 py-2 rounded-md flex items-center justify-between hover:bg-gray-700"
+                            >
+                                <span className="flex items-center space-x-2">
+                                    <i className="fas fa-users"></i>
+                                    <span>Direct Messages</span>
+                                </span>
+                                <i className={`fas fa-chevron-${showUsers ? 'up' : 'down'}`}></i>
+                            </button>
+                            
+                            {showUsers && (
+                                <div className="mt-2 space-y-1 slide-in">
+                                    {users.filter(u => u.id !== currentUser.id).map(user => (
+                                        <button
+                                            key={user.id}
+                                            onClick={() => onDirectMessage([...directMessages, user.id])}
+                                            className="w-full text-left px-3 py-2 rounded-md flex items-center space-x-2 hover:bg-gray-700"
+                                        >
+                                            <div className="relative">
+                                                <img
+                                                    src={user.avatar}
+                                                    alt={user.name}
+                                                    className="w-6 h-6 rounded-full"
+                                                />
+                                                <span className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-gray-800 ${
+                                                    user.status === 'online' ? 'bg-green-500' :
+                                                    user.status === 'away' ? 'bg-yellow-500' : 'bg-gray-500'
+                                                }`}></span>
+                                            </div>
+                                            <span className="text-sm">{user.name}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    
+                    <div className="p-4 border-t border-gray-700">
+                        <div className="flex items-center space-x-2">
+                            <div className="relative">
+                                <img
+                                    src={currentUser.avatar}
+                                    alt={currentUser.name}
+                                    className="w-8 h-8 rounded-full"
+                                />
+                                <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-gray-800"></span>
+                            </div>
+                            <div className="flex-1">
+                                <p className="text-sm font-medium">{currentUser.name}</p>
+                                <p className="text-xs text-gray-400">Active now</p>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            );
+        }
+
+        // Chat Area Component
+        function ChatArea({ channel, messages, users, currentUser, onSendMessage, onAddReaction, typingUsers, showEmojiPicker, onToggleEmojiPicker }) {
+            const [messageInput, setMessageInput] = useState('');
+            const messagesEndRef = useRef(null);
+            
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            };
+            
+            useEffect(() => {
+                scrollToBottom();
+            }, [messages]);
+            
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSendMessage(messageInput);
+                setMessageInput('');
+            };
+            
+            const formatTime = (date) => {
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            };
+            
+            return (
+                <div className="flex-1 flex flex-col bg-white">
+                    <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-800">
+                                {channel.type === 'private' ? <i className="fas fa-lock mr-2"></i> : <i className="fas fa-hashtag mr-2"></i>}
+                                {channel.name}
+                            </h2>
+                            <p className="text-sm text-gray-500">{channel.description}</p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <button className="text-gray-600 hover:text-gray-800">
+                                <i className="fas fa-phone"></i>
+                            </button>
+                            <button className="text-gray-600 hover:text-gray-800">
+                                <i className="fas fa-video"></i>
+                            </button>
+                            <button className="text-gray-600 hover:text-gray-800">
+                                <i className="fas fa-info-circle"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="flex-1 messages-container px-6 py-4">
+                        {messages.map(message => {
+                            const user = users.find(u => u.id === message.userId);
+                            const isOwnMessage = message.userId === currentUser.id;
+                            
+                            return (
+                                <div key={message.id} className={`mb-4 flex ${isOwnMessage ? 'justify-end' : 'justify-start'} fade-in`}>
+                                    {!isOwnMessage && (
+                                        <img
+                                            src={user.avatar}
+                                            alt={user.name}
+                                            className="w-8 h-8 rounded-full mr-3"
+                                        />
+                                    )}
+                                    
+                                    <div className={`max-w-md ${isOwnMessage ? 'order-first' : ''}`}>
+                                        {!isOwnMessage && (
+                                            <p className="text-xs text-gray-500 mb-1">{user.name}</p>
+                                        )}
+                                        
+                                        <div className={`relative px-4 py-2 rounded-lg ${
+                                            isOwnMessage
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-gray-100 text-gray-800'
+                                        }`}>
+                                            <p>{message.content}</p>
+                                            <span className={`text-xs ${isOwnMessage ? 'text-blue-100' : 'text-gray-500'} mt-1 block`}>
+                                                {formatTime(message.timestamp)}
+                                            </span>
+                                            
+                                            <button
+                                                onClick={() => onToggleEmojiPicker(showEmojiPicker === message.id ? null : message.id)}
+                                                className={`absolute -bottom-2 ${isOwnMessage ? 'left-0' : 'right-0'} bg-white border border-gray-200 rounded-full w-6 h-6 flex items-center justify-center text-gray-600 hover:text-gray-800`}
+                                            >
+                                                <i className="fas fa-smile text-xs"></i>
+                                            </button>
+                                            
+                                            {showEmojiPicker === message.id && (
+                                                <div className="absolute bottom-8 right-0 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                                                    <div className="emoji-picker">
+                                                        {emojis.map(emoji => (
+                                                            <button
+                                                                key={emoji}
+                                                                onClick={() => {
+                                                                    onAddReaction(message.id, emoji);
+                                                                    onToggleEmojiPicker(null);
+                                                                }}
+                                                                className="emoji-option"
+                                                            >
+                                                                {emoji}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                        
+                                        {Object.keys(message.reactions).length > 0 && (
+                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                {Object.entries(message.reactions).map(([emoji, userIds]) => (
+                                                    <button
+                                                        key={emoji}
+                                                        onClick={() => onAddReaction(message.id, emoji)}
+                                                        className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${
+                                                            userIds.includes(currentUser.id)
+                                                                ? 'bg-blue-100 text-blue-600 border border-blue-200'
+                                                                : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                                        }`}
+                                                    >
+                                                        <span>{emoji}</span>
+                                                        <span>{userIds.length}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {isOwnMessage && (
+                                        <img
+                                            src={user.avatar}
+                                            alt={user.name}
+                                            className="w-8 h-8 rounded-full ml-3"
+                                        />
+                                    )}
+                                </div>
+                            );
+                        })}
+                        
+                        {typingUsers.length > 0 && (
+                            <div className="flex items-center">
+                                <div className="typing-indicator">
+                                    <span></span>
+                                    <span></span>
+                                    <span></span>
+                                </div>
+                                <span className="ml-2 text-sm text-gray-500">
+                                    {typingUsers.map(id => users.find(u => u.id === id).name).join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+                                </span>
+                            </div>
+                        )}
+                        
+                        <div ref={messagesEndRef} />
+                    </div>
+                    
+                    <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-gray-200">
+                        <div className="flex items-center space-x-2">
+                            <button type="button" className="text-gray-600 hover:text-gray-800">
+                                <i className="fas fa-paperclip"></i>
+                            </button>
+                            
+                            <input
+                                type="text"
+                                placeholder="Type a message..."
+                                className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={messageInput}
+                                onChange={(e) => setMessageInput(e.target.value)}
+                            />
+                            
+                            <button type="button" className="text-gray-600 hover:text-gray-800">
+                                <i className="fas fa-smile"></i>
+                            </button>
+                            
+                            <button
+                                type="submit"
+                                className="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700 transition-colors"
+                            >
+                                <i className="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        }
+
+        // Notification Component
+        function Notification({ message, type }) {
+            const bgColor = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+            
+            return (
+                <div className={`notification ${bgColor} show`}>
+                    <div className="flex items-center">
+                        <i className={`fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'} mr-2`}></i>
+                        <span>{message}</span>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the app
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
